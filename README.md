@@ -138,10 +138,6 @@ adb shell su -c "ls -la /data/adb/service.d/autoshutdown_service.sh"
 
 The file should show as executable (`-rwxr-xr-x`).
 
-### 📝 Line ending problems?
-
-If the script isn't running on your device, it might have Windows line endings. Use a code editor to convert `autoshutdown_service.sh` to **Unix (LF)** line endings, then reinstall.
-
 ### ⚡ Script running multiple times?
 
 This shouldn't happen (built-in protection), but if it does:
