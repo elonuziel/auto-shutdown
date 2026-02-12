@@ -1,16 +1,16 @@
 # Auto-Shutdown for Android
 
-Automatically shuts down your rooted Android device after a period of inactivity. Great for saving battery on tablets, backup phones, or devices you don't need running 24/7.
+**Set it and forget it!** This script automatically powers off your rooted Android device after you haven't used it for a while. Perfect for tablets, spare phones, or any device draining battery in your drawer.
 
-## Features
+## ✨ Features
 
-- Configurable wait time before shutdown (default: 2.5 hours)
-- Warning notification before shutting down
-- Snooze by keeping screen on during warning
-- Optional: skip shutdown when charging
-- Easy to stop/cancel anytime
-- Runs automatically on boot via Magisk
-- Battery efficient with periodic checks
+- ⏰ **Customizable** — Change when it shuts down (default: 2.5 hours)
+- 🔔 **Smart warnings** — Get notified before shutdown happens
+- 😴 **Snooze** — Keep your screen on to pause the shutdown
+- 🔌 **Charging aware** — Optionally skip shutdown if plugged in
+- ⛔ **Easy to cancel** — Stop it anytime with one command
+- 🚀 **Auto-loads** — Runs automatically on boot (needs Magisk)
+- 🔋 **Battery friendly** — Smart checks that don't drain power
 
 ## Requirements
 
@@ -55,90 +55,105 @@ adb shell su -c "mv /sdcard/stop_shutdown.sh /data/local/tmp/ && chmod +x /data/
 
 ## ⚙️ Configuration
 
-Edit the configuration section in `autoshutdown_service.sh`:
+Open `autoshutdown_service.sh` and adjust these settings at the top:
 
 ```bash
-# Calculate times using awk (Hours * Minutes * Seconds)
-WAIT_TIME=$(awk 'BEGIN {print 2.5*60*60}')   # 2.5 hours initial wait
-SNOConfiguration
-
-Edit these settings in `autoshutdown_service.sh`:
-
-```bash
-WAIT_TIME=$(awk 'BEGIN {print 2.5*60*60}')   # 2.5 hours initial wait
-SNOOZE_TIME=$(awk 'BEGIN {print 20*60}')     # 20 minutes snooze
-WARN_TIME=60                                  # 60 seconds warning
-CHECK_INTERVAL=30                             # Check screen every 30s
-SKIP_IF_CHARGING=0                            # Skip if charging (0=disabled, 1=enabled)
+WAIT_TIME=$(awk 'BEGIN {print 2.5*60*60}')   # How long until first warning (2.5 hours)
+SNOOZE_TIME=$(awk 'BEGIN {print 20*60}')     # How long to pause when you snooze (20 minutes)
+WARN_TIME=60                                  # Countdown to shutdown after warning (60 seconds)
+CHECK_INTERVAL=30                             # How often to check screen (30 seconds)
+SKIP_IF_CHARGING=0                            # Set to 1 to prevent shutdown while charging
 ```
+
+**Quick settings:**
+- Increase `WARN_TIME` → get more time to react to the warning
+- Decrease `WAIT_TIME` → get warned sooner
+- Set `SKIP_IF_CHARGING=1` → never shut down while charging
+
+## 🎯 How It Works
+
+Think of it like a smart timer:
+
+1. **Boot** → Script starts automatically when your phone powers on
+2. **Wait** → Your device relaxes for the configured time (default: 2.5 hours)
+3. **Check** → Script checks if your screen is on
+4. **Screen is ON?** → You get a warning notification with a countdown
+   - If you touch/use the device → snooze for 20 minutes
+   - If you ignore it → device shuts down
+5. **Screen already OFF?** → Shuts down immediately (you're probably not using it anyway!)
+
+## 📱 Usage
+
+### Start the Timer
+
+```bash
+# After installation, just reboot your device
+adb reboot
+```
+
+The script runs automatically in the background. You'll see a notification that it's active.
+
+### Check What's Happening
+
+```bash
+# View what the script is doing
 adb shell su -c "cat /data/local/tmp/shutdown_log.txt"
 
-# Check if timer is running
-adb shell su -c "cat /data/local/tmp/shutdown_timer.pid"
+# Confirm it's running
 adb shell su -c "ps | grep autoshutdown"
 ```
 
-###Usage
+### Stop or Cancel the Timer
 
-### Check Status
-
+**Option 1: Quick cancel** (if you installed the stop script)
 ```bash
-# View the log
-adb shell su -c "cat /data/local/tmp/shutdown_log.txt"
-
-# Check if running
-adb shell su -c "cat /data/local/tmp/shutdown_timer.pid"
+adb shell su -c "/data/local/tmp/stop_shutdown.sh"
 ```
 
-### Stop the Timer
-
+**Option 2: Manual cancel**
 ```bash
-# Option 1: Use stop script
-adb shell su -c "/data/local/tmp/stop_shutdown.sh"
-
-# Option 2: Create stop signal file
 adb shell touch /sdcard/stop_shutdown_timer
+```
 
-# Option 3: Kill the process
+**Option 3: Force kill**
+```bash
 adb shell su -c "kill $(cat /data/local/tmp/shutdown_timer.pid)"
 ```
 
-### How It Works
+## ❓ Troubleshooting
 
-1. Script starts automatically after boot
-2. Waits for configured time (default: 2.5 hours)
-3. Checks if screen is on or off
-4. If screen is on: shows warning → you can keep screen on to snooze
-5. If screen is off (or turned off during warning): shuts down
-### Notifications Not Appearing
+### 🔔 Notifications aren't showing?
 
-Some Android versions may suppress notifications. Check:
-- Notification permissions for system apps
-- Do Not Disturb mode settings
-- Check log file to verify script is running
+Some Android versions hide system notifications. Try these:
+- Check if notifications are enabled for system apps in Settings
+- Turn off Do Not Disturb mode
+- Check the log file to confirm the script is running: `adb shell su -c "cat /data/local/tmp/shutdown_log.txt"`
 
-### Script Runs Multiple Times
+### 🚀 Script won't start after reboot?
 
-TheTroubleshooting
-
-**Script not running after reboot?**
+Make sure it's installed correctly:
 ```bash
-# Check if file exists and is executable
 adb shell su -c "ls -la /data/adb/service.d/autoshutdown_service.sh"
 ```
 
-**Line ending issues?** Make sure the script has Unix (LF) line endings, not Windows (CRLF).
+The file should show as executable (`-rwxr-xr-x`).
 
-**Multiple instances running?**
+### 📝 Line ending problems?
+
+If the script isn't running on your device, it might have Windows line endings. Use a code editor to convert `autoshutdown_service.sh` to **Unix (LF)** line endings, then reinstall.
+
+### ⚡ Script running multiple times?
+
+This shouldn't happen (built-in protection), but if it does:
 ```bash
 adb shell su -c "rm -f /data/local/tmp/shutdown_timer.pid"
 adb reboot
 ```
 
-## License
+## 📄 License
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
-## Disclaimer
+## ⚠️ Important
 
-This script has root access and can shut down your device. Use at your own risk.
+This script has root access and can shut down your device. Use responsibly and at your own risk.
