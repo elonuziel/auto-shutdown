@@ -76,8 +76,10 @@ do_shutdown() {
     send_toast "⏰ Shutdown Timer Active! Will check in ${HOURS} hours."
     
     # 3. The Big Wait (with periodic checks for cancel signal)
+    # Subtract WARN_TIME so the warning fires WARN_TIME seconds before the full wait expires
+    EFFECTIVE_WAIT=$((WAIT_TIME - WARN_TIME))
     ELAPSED=0
-    while [ $ELAPSED -lt $WAIT_TIME ]; do
+    while [ $ELAPSED -lt $EFFECTIVE_WAIT ]; do
         if [ -f "$STOP_FILE" ]; then
             echo "[$(date)] Stop signal found during initial wait. Timer cancelled!" >> "$LOG_FILE"
             send_toast "✓ Shutdown Timer Cancelled!"
