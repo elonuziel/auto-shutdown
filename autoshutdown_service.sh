@@ -22,11 +22,22 @@ PID_FILE="/data/local/tmp/shutdown_timer.pid"
 # Optional: Skip shutdown if charging (set to 1 to enable)
 SKIP_IF_CHARGING=0
 
+# Wakelock name (prevents deep sleep from freezing timers)
+WAKELOCK_NAME="autoshutdown_timer"
+
 # --- FUNCTIONS ---
 
 send_toast() {
     # Uses UID 2000 (Shell) to force notification to appear
     su -lp 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'System' '$1'" > /dev/null 2>&1
+}
+
+acquire_wakelock() {
+    echo "$WAKELOCK_NAME" > /sys/power/wake_lock
+}
+
+release_wakelock() {
+    echo "$WAKELOCK_NAME" > /sys/power/wake_unlock 2>/dev/null
 }
 
 is_charging() {
@@ -36,7 +47,8 @@ is_charging() {
 }
 
 cleanup() {
-    # Remove PID file on exit
+    # Release wakelock and remove PID file on exit
+    release_wakelock
     rm -f "$PID_FILE"
     echo "[$(date)] Script terminated. PID file cleaned up." >> "$LOG_FILE"
 }
@@ -65,6 +77,9 @@ do_shutdown() {
     
     # Save our PID
     echo $$ > "$PID_FILE"
+    
+    # Acquire wakelock to prevent deep sleep from freezing timers
+    acquire_wakelock
     
     # 1. Log Start & Clear old stop signs
     echo "[$(date)] ========================================" >> "$LOG_FILE"
