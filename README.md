@@ -100,7 +100,7 @@ The script runs automatically in the background. You'll see a notification that 
 adb shell su -c "cat /data/local/tmp/shutdown_log.txt"
 
 # Confirm it's running
-adb shell su -c "ps | grep autoshutdown"
+adb shell su -c "pgrep -l -f autoshutdown || ps -ef | grep autoshutdown"
 ```
 
 ### Stop or Cancel the Timer

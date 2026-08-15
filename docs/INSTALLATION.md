@@ -81,7 +81,7 @@ adb shell su -c "cat /data/local/tmp/shutdown_log.txt"
 
 # Check if running
 adb shell su -c "cat /data/local/tmp/shutdown_timer.pid"
-adb shell su -c "ps | grep autoshutdown"
+adb shell su -c "pgrep -l -f autoshutdown || ps -ef | grep autoshutdown"
 
 # View boot log (root manager specific)
 adb shell su -c "cat /cache/magisk.log"          # Magisk

@@ -30,8 +30,8 @@ WAKELOCK_NAME="autoshutdown_timer"
 send_toast() {
     # Post notification (works across Magisk, KernelSU, APatch, and Shell UID 2000)
     cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' "$1" > /dev/null 2>&1 || \
-    su 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' '$1'" > /dev/null 2>&1 || \
-    su -lp 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' '$1'" > /dev/null 2>&1
+    su 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' \"$1\"" > /dev/null 2>&1 || \
+    su -lp 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' \"$1\"" > /dev/null 2>&1
 }
 
 acquire_wakelock() {
@@ -44,7 +44,7 @@ release_wakelock() {
 
 is_charging() {
     # Check if device is plugged in (AC, USB, Wireless, or Dock)
-    CHARGING=$(dumpsys battery 2>/dev/null | grep -E "AC powered: true|USB powered: true|Wireless powered: true|Dock powered: true")
+    CHARGING=$(dumpsys battery 2>/dev/null | grep -Ei "AC powered: true|USB powered: true|Wireless powered: true|Dock powered: true")
     [ -n "$CHARGING" ]
 }
 
@@ -58,8 +58,8 @@ cleanup() {
 check_for_existing_instance() {
     # Prevent multiple instances from running
     if [ -f "$PID_FILE" ]; then
-        OLD_PID=$(cat "$PID_FILE")
-        if kill -0 "$OLD_PID" 2>/dev/null; then
+        OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
             echo "[$(date)] Another instance (PID: $OLD_PID) is already running. Exiting." >> "$LOG_FILE"
             send_toast "Shutdown timer already running!"
             exit 1
@@ -107,9 +107,14 @@ do_shutdown() {
             exit 0
         fi
         
-        # Sleep in smaller chunks to respond to stop signal faster
-        sleep 60  # Check every minute during initial wait
-        ELAPSED=$((ELAPSED + 60))
+        # Sleep in chunks to respond quickly to stop signals while hitting exact target time
+        REMAINING=$((EFFECTIVE_WAIT - ELAPSED))
+        CHUNK=60
+        if [ $REMAINING -lt $CHUNK ]; then
+            CHUNK=$REMAINING
+        fi
+        sleep $CHUNK
+        ELAPSED=$((ELAPSED + CHUNK))
     done
 
     # 4. Main shutdown logic loop
@@ -163,7 +168,7 @@ do_shutdown() {
                 echo "[$(date)] Screen turned OFF after warning. Shutting down NOW." >> "$LOG_FILE"
                 send_toast "🔌 Shutting down..."
                 sleep 2  # Give notification time to display
-                /system/bin/svc power shutdown || /system/bin/reboot -p || reboot -p
+                /system/bin/svc power shutdown || setprop sys.powerctl shutdown || /system/bin/reboot -p || reboot -p
                 exit 0
             fi
         else
@@ -171,7 +176,7 @@ do_shutdown() {
             echo "[$(date)] Screen is OFF. Shutting down NOW." >> "$LOG_FILE"
             send_toast "🔌 Shutting down..."
             sleep 2  # Give notification time to display
-            /system/bin/svc power shutdown || /system/bin/reboot -p || reboot -p
+            /system/bin/svc power shutdown || setprop sys.powerctl shutdown || /system/bin/reboot -p || reboot -p
             exit 0
         fi
         
