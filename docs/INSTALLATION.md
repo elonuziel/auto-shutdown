@@ -27,12 +27,12 @@ adb reboot
 
 ## What is /data/adb/service.d?
 
-This is **Magisk's official boot script directory**:
+This is **the standard late-start boot script directory** supported by **Magisk**, **KernelSU**, and **APatch**:
 - ✅ Scripts run automatically at boot
 - ✅ Runs in `late_start service` mode (non-blocking)
 - ✅ Executes AFTER boot completes (safe for your use case)
-- ✅ Has full root access
-- ✅ Survives ROM updates (as long as Magisk is reinstalled)
+- ✅ Has full root access (UID 0 / root domain)
+- ✅ Survives ROM updates (as long as your root solution is reinstalled)
 
 ## Differences from Your Original Script
 
@@ -51,7 +51,7 @@ The `/data/adb/service.d` version includes:
    ( ... ) &
    exit 0
    ```
-   Prevents blocking Magisk's boot process
+   Prevents blocking the boot process
 
 3. **Everything else stays the same**: All your battery optimizations and features intact!
 
@@ -83,8 +83,9 @@ adb shell su -c "cat /data/local/tmp/shutdown_log.txt"
 adb shell su -c "cat /data/local/tmp/shutdown_timer.pid"
 adb shell su -c "ps | grep autoshutdown"
 
-# View Magisk boot log
-adb shell su -c "cat /cache/magisk.log"
+# View boot log (root manager specific)
+adb shell su -c "cat /cache/magisk.log"          # Magisk
+adb shell su -c "logcat -d -s KernelSU ksud"    # KernelSU
 ```
 
 ## Important Notes
@@ -92,22 +93,24 @@ adb shell su -c "cat /cache/magisk.log"
 ### ✅ Advantages of service.d:
 - Automatic execution at every boot
 - No need for Tasker or other automation apps
-- Survives ROM updates (if you reinstall Magisk)
-- Official Magisk feature, well-supported
+- Survives ROM updates (if you reinstall your root solution)
+- Standard feature across Magisk, KernelSU, and APatch
 
 ### ⚠️ Things to Know:
 - Script must be **executable** (chmod +x)
 - Script must have **Unix line endings** (LF, not CRLF)
   - If you edited on Windows, convert with: `dos2unix autoshutdown_service.sh`
   - Or use Notepad++ → Edit → EOL Conversion → Unix (LF)
-- Boot process may be delayed by up to 40 seconds if script has issues
-- Scripts run with Magisk's BusyBox, not Android's toybox
+- Boot process may be delayed if a blocking script is placed in service.d without proper detachment
+- Scripts run in root environment with BusyBox/toybox tools available
 
 ## Troubleshooting
 
 **Script not running at boot?**
 1. Check file permissions: `ls -l /data/adb/service.d/`
-2. Check Magisk log: `cat /cache/magisk.log` (look for "service.d: exec")
+2. Check root logs:
+   - Magisk: `cat /cache/magisk.log` (look for "service.d: exec")
+   - KernelSU: `logcat -d -s KernelSU ksud`
 3. Check for line ending issues: `cat -v /data/adb/service.d/autoshutdown_service.sh`
    - Should NOT see `^M` at line ends
 
@@ -162,4 +165,4 @@ After reboot:
 2. Check log: `cat /data/local/tmp/shutdown_log.txt`
 3. Should see entry with timestamp and "Timer started"
 
-If you don't see the notification, check the Magisk log and troubleshoot above!
+If you don't see the notification, check the root logs and troubleshoot above!

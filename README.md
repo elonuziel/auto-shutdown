@@ -9,12 +9,12 @@
 - 😴 **Snooze** — Keep your screen on to pause the shutdown
 - 🔌 **Charging aware** — Optionally skip shutdown if plugged in
 - ⛔ **Easy to cancel** — Stop it anytime with one command
-- 🚀 **Auto-loads** — Runs automatically on boot (needs Magisk)
+- 🚀 **Auto-loads** — Runs automatically on boot (supports Magisk, KernelSU, and APatch)
 - 🔋 **Battery friendly** — Smart checks that don't drain power
 
 ## Requirements
 
-- Rooted Android device with [Magisk](https://github.com/topjohnwu/Magisk)
+- Rooted Android device with [Magisk](https://github.com/topjohnwu/Magisk), [KernelSU](https://github.com/tiann/KernelSU), or [APatch](https://github.com/bmax121/APatch)
 - ADB (Android Debug Bridge) for installation
 - Android 8.0+ recommended
 
@@ -26,7 +26,7 @@
 # Push the script to your device
 adb push autoshutdown_service.sh /sdcard/
 
-# Install to Magisk service.d directory
+# Install to service.d directory (standard across Magisk, KernelSU, and APatch)
 adb shell
 su
 mv /sdcard/autoshutdown_service.sh /data/adb/service.d/

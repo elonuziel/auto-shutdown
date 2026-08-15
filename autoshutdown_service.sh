@@ -1,7 +1,7 @@
 #!/system/bin/sh
 
 # =============================================================================
-# AUTO-SHUTDOWN SCRIPT FOR MAGISK SERVICE.D
+# AUTO-SHUTDOWN SCRIPT FOR SERVICE.D (MAGISK / KERNELSU / APATCH)
 # Automatically shuts down device after inactivity to save battery
 # Optimized for /data/adb/service.d execution
 # =============================================================================
@@ -9,10 +9,10 @@
 # --- CONFIGURATION ---
 
 # Calculate times using awk (Hours * Minutes * Seconds)
-WAIT_TIME=$(awk 'BEGIN {print 2.5*60*60}')   # 2.5 Hours initial wait
-SNOOZE_TIME=$(awk 'BEGIN {print 20*60}')     # 20 Minutes snooze
-WARN_TIME=60                                  # 60 Seconds warning
-CHECK_INTERVAL=30                             # Check screen state every 30s (saves battery)
+WAIT_TIME=$(awk 'BEGIN {printf "%.0f\n", 2.5*60*60}')   # 2.5 Hours initial wait
+SNOOZE_TIME=$(awk 'BEGIN {printf "%.0f\n", 20*60}')     # 20 Minutes snooze
+WARN_TIME=60                                            # 60 Seconds warning
+CHECK_INTERVAL=30                                       # Check screen state every 30s (saves battery)
 
 # File paths
 LOG_FILE="/data/local/tmp/shutdown_log.txt"
@@ -28,12 +28,14 @@ WAKELOCK_NAME="autoshutdown_timer"
 # --- FUNCTIONS ---
 
 send_toast() {
-    # Uses UID 2000 (Shell) to force notification to appear
-    su -lp 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'System' '$1'" > /dev/null 2>&1
+    # Post notification (works across Magisk, KernelSU, APatch, and Shell UID 2000)
+    cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' "$1" > /dev/null 2>&1 || \
+    su 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' '$1'" > /dev/null 2>&1 || \
+    su -lp 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' '$1'" > /dev/null 2>&1
 }
 
 acquire_wakelock() {
-    echo "$WAKELOCK_NAME" > /sys/power/wake_lock
+    echo "$WAKELOCK_NAME" > /sys/power/wake_lock 2>/dev/null
 }
 
 release_wakelock() {
@@ -41,8 +43,8 @@ release_wakelock() {
 }
 
 is_charging() {
-    # Check if device is plugged in
-    CHARGING=$(dumpsys battery | grep "AC powered: true\|USB powered: true\|Wireless powered: true")
+    # Check if device is plugged in (AC, USB, Wireless, or Dock)
+    CHARGING=$(dumpsys battery 2>/dev/null | grep -E "AC powered: true|USB powered: true|Wireless powered: true|Dock powered: true")
     [ -n "$CHARGING" ]
 }
 
@@ -93,6 +95,9 @@ do_shutdown() {
     # 3. The Big Wait (with periodic checks for cancel signal)
     # Subtract WARN_TIME so the warning fires WARN_TIME seconds before the full wait expires
     EFFECTIVE_WAIT=$((WAIT_TIME - WARN_TIME))
+    if [ $EFFECTIVE_WAIT -lt 0 ]; then
+        EFFECTIVE_WAIT=0
+    fi
     ELAPSED=0
     while [ $ELAPSED -lt $EFFECTIVE_WAIT ]; do
         if [ -f "$STOP_FILE" ]; then
@@ -125,7 +130,7 @@ do_shutdown() {
         fi
 
         # --- CHECK SCREEN STATE ---
-        SCREEN_STATE=$(dumpsys power | grep "mWakefulness=" | grep -o "Awake")
+        SCREEN_STATE=$(dumpsys power 2>/dev/null | grep "mWakefulness=" | grep -o "Awake")
 
         if [ "$SCREEN_STATE" = "Awake" ]; then
             # --- WARNING PHASE ---
@@ -138,7 +143,7 @@ do_shutdown() {
             sleep $WARN_TIME
             
             # Re-check Screen State
-            SCREEN_STATE_2=$(dumpsys power | grep "mWakefulness=" | grep -o "Awake")
+            SCREEN_STATE_2=$(dumpsys power 2>/dev/null | grep "mWakefulness=" | grep -o "Awake")
             
             # Re-check Cancel Signal (in case cancelled during warning)
             if [ -f "$STOP_FILE" ]; then
@@ -158,7 +163,7 @@ do_shutdown() {
                 echo "[$(date)] Screen turned OFF after warning. Shutting down NOW." >> "$LOG_FILE"
                 send_toast "🔌 Shutting down..."
                 sleep 2  # Give notification time to display
-                /system/bin/svc power shutdown
+                /system/bin/svc power shutdown || /system/bin/reboot -p || reboot -p
                 exit 0
             fi
         else
@@ -166,7 +171,7 @@ do_shutdown() {
             echo "[$(date)] Screen is OFF. Shutting down NOW." >> "$LOG_FILE"
             send_toast "🔌 Shutting down..."
             sleep 2  # Give notification time to display
-            /system/bin/svc power shutdown
+            /system/bin/svc power shutdown || /system/bin/reboot -p || reboot -p
             exit 0
         fi
         
@@ -187,5 +192,5 @@ do_shutdown() {
     do_shutdown
 ) &
 
-# Exit immediately so Magisk can continue boot process
+# Exit immediately so the boot process can continue
 exit 0
