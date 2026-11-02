@@ -1,201 +1,174 @@
 #!/system/bin/sh
 
 # =============================================================================
-# AUTO-SHUTDOWN SCRIPT FOR SERVICE.D (MAGISK / KERNELSU / APATCH)
-# Automatically shuts down device after inactivity to save battery
-# Optimized for /data/adb/service.d execution
+# AUTO-SHUTDOWN SCRIPT FOR SERVICE.D (MAGISK / KERNELSU / BAKASU)
 # =============================================================================
 
 # --- CONFIGURATION ---
+INACTIVITY_TIMEOUT=$(( 150 * 60 ))    # 2.5 Hours (9000 seconds)
+WARN_TIME=60                          # 60 Seconds warning before shutdown
+SNOOZE_TIME=$(( 20 * 60 ))            # 20 Minutes snooze if canceled/active
+CHECK_INTERVAL=$(( 15 * 60 ))         # Check interval: 15 minutes (900 seconds)
+SKIP_IF_CHARGING=0                    # 1 = Do not shutdown if charging
 
-# Calculate times using awk (Hours * Minutes * Seconds)
-WAIT_TIME=$(awk 'BEGIN {printf "%.0f\n", 2.5*60*60}')   # 2.5 Hours initial wait
-SNOOZE_TIME=$(awk 'BEGIN {printf "%.0f\n", 20*60}')     # 20 Minutes snooze
-WARN_TIME=60                                            # 60 Seconds warning
-CHECK_INTERVAL=30                                       # Check screen state every 30s (saves battery)
-
-# File paths
 LOG_FILE="/data/local/tmp/shutdown_log.txt"
-STOP_FILE="/sdcard/stop_shutdown_timer"
+STOP_FILE="/data/local/tmp/stop_shutdown_timer"
 PID_FILE="/data/local/tmp/shutdown_timer.pid"
 
-# Optional: Skip shutdown if charging (set to 1 to enable)
-SKIP_IF_CHARGING=0
+# --- HELPER FUNCTIONS ---
 
-# Wakelock name (prevents deep sleep from freezing timers)
-WAKELOCK_NAME="autoshutdown_timer"
-
-# --- FUNCTIONS ---
-
-send_toast() {
-    # Post notification (works across Magisk, KernelSU, APatch, and Shell UID 2000)
-    cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' "$1" > /dev/null 2>&1 || \
-    su 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' \"$1\"" > /dev/null 2>&1 || \
-    su -lp 2000 -c "cmd notification post -S bigtext -t 'Auto Shutdown' 'autoshutdown' \"$1\"" > /dev/null 2>&1
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
-acquire_wakelock() {
-    echo "$WAKELOCK_NAME" > /sys/power/wake_lock 2>/dev/null
+get_boottime_sec() {
+    read -r up _ < /proc/uptime
+    echo "${up%%.*}"
 }
 
-release_wakelock() {
-    echo "$WAKELOCK_NAME" > /sys/power/wake_unlock 2>/dev/null
+send_notif() {
+    # Post via shell UID 2000 with system warning icon
+    su 2000 -c "cmd notification post -i @android:drawable/stat_sys_warning -S bigtext -t \"$1\" 'autoshutdown' \"$2\"" > /dev/null 2>&1
+}
+
+is_screen_on() {
+    dumpsys power 2>/dev/null | grep -q "mWakefulness=Awake"
 }
 
 is_charging() {
-    # Check if device is plugged in (AC, USB, Wireless, or Dock)
-    CHARGING=$(dumpsys battery 2>/dev/null | grep -Ei "AC powered: true|USB powered: true|Wireless powered: true|Dock powered: true")
-    [ -n "$CHARGING" ]
+    dumpsys battery 2>/dev/null | grep -Eqi "(AC|USB|Wireless|Dock) powered: true"
+}
+
+execute_shutdown() {
+    log_msg "Initiating power off..."
+    send_notif "🔌 Auto-Shutdown" "Shutting down device now..."
+    sleep 2
+    setprop sys.powerctl shutdown || svc power shutdown || reboot -p
 }
 
 cleanup() {
-    # Release wakelock and remove PID file on exit
-    release_wakelock
+    su 2000 -c "cmd notification post -i @android:drawable/stat_sys_warning -S bigtext -t 'Auto-Shutdown' 'autoshutdown' 'Daemon stopped.'" > /dev/null 2>&1
     rm -f "$PID_FILE"
-    echo "[$(date)] Script terminated. PID file cleaned up." >> "$LOG_FILE"
+    log_msg "Daemon stopped."
 }
 
-check_for_existing_instance() {
-    # Prevent multiple instances from running
+# --- MAIN DAEMON ---
+
+run_daemon() {
+    trap cleanup EXIT INT TERM
+
+    # Ensure permissions for shell user
+    pm grant com.android.shell android.permission.POST_NOTIFICATIONS >/dev/null 2>&1
+    cmd appops set com.android.shell POST_NOTIFICATION allow >/dev/null 2>&1
+
+    # Kill duplicate instances
     if [ -f "$PID_FILE" ]; then
         OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
         if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-            echo "[$(date)] Another instance (PID: $OLD_PID) is already running. Exiting." >> "$LOG_FILE"
-            send_toast "Shutdown timer already running!"
             exit 1
-        else
-            echo "[$(date)] Stale PID file found. Cleaning up." >> "$LOG_FILE"
-            rm -f "$PID_FILE"
         fi
     fi
-}
-
-do_shutdown() {
-    # Set up cleanup trap
-    trap cleanup EXIT INT TERM
-    
-    # Check for existing instance
-    check_for_existing_instance
-    
-    # Save our PID
     echo $$ > "$PID_FILE"
-    
-    # Acquire wakelock to prevent deep sleep from freezing timers
-    acquire_wakelock
-    
-    # 1. Log Start & Clear old stop signs
-    echo "[$(date)] ========================================" >> "$LOG_FILE"
-    echo "[$(date)] Timer started. Waiting ${WAIT_TIME}s ($(awk -v t=$WAIT_TIME 'BEGIN {printf "%.1f hours", t/3600}'))" >> "$LOG_FILE"
+
+    log_msg "Shutdown daemon active. Target inactivity: ${INACTIVITY_TIMEOUT}s. Check interval: ${CHECK_INTERVAL}s."
     rm -f "$STOP_FILE"
-    
-    # 2. Send startup notification
-    HOURS=$(awk -v t=$WAIT_TIME 'BEGIN {printf "%.1f", t/3600}')
-    send_toast "⏰ Shutdown Timer Active! Will check in ${HOURS} hours."
-    
-    # 3. The Big Wait (with periodic checks for cancel signal)
-    # Subtract WARN_TIME so the warning fires WARN_TIME seconds before the full wait expires
-    EFFECTIVE_WAIT=$((WAIT_TIME - WARN_TIME))
-    if [ $EFFECTIVE_WAIT -lt 0 ]; then
-        EFFECTIVE_WAIT=0
-    fi
-    ELAPSED=0
-    while [ $ELAPSED -lt $EFFECTIVE_WAIT ]; do
-        if [ -f "$STOP_FILE" ]; then
-            echo "[$(date)] Stop signal found during initial wait. Timer cancelled!" >> "$LOG_FILE"
-            send_toast "✓ Shutdown Timer Cancelled!"
-            rm -f "$STOP_FILE"
-            exit 0
-        fi
-        
-        # Sleep in chunks to respond quickly to stop signals while hitting exact target time
-        REMAINING=$((EFFECTIVE_WAIT - ELAPSED))
-        CHUNK=60
-        if [ $REMAINING -lt $CHUNK ]; then
-            CHUNK=$REMAINING
-        fi
-        sleep $CHUNK
-        ELAPSED=$((ELAPSED + CHUNK))
-    done
 
-    # 4. Main shutdown logic loop
+    # Immediate notification on launch
+    send_notif "⏰ Auto-Shutdown Active" "Timer started. Device will power off after 2.5h of inactivity."
+
+    LAST_ACTIVE=$(get_boottime_sec)
+
     while true; do
-        # --- CHECK FOR CANCEL SIGNAL ---
+        # 1. Stop file check
         if [ -f "$STOP_FILE" ]; then
-            echo "[$(date)] Stop signal found. Timer cancelled!" >> "$LOG_FILE"
-            send_toast "✓ Shutdown Timer Cancelled!"
+            log_msg "Stop signal detected. Terminating daemon."
+            send_notif "✓ Auto-Shutdown Cancelled" "Inactivity timer has been manually stopped."
             rm -f "$STOP_FILE"
             exit 0
         fi
 
-        # --- CHECK IF CHARGING (optional) ---
+        # 2. Charging bypass
         if [ "$SKIP_IF_CHARGING" -eq 1 ] && is_charging; then
-            echo "[$(date)] Device is charging. Skipping shutdown check." >> "$LOG_FILE"
-            sleep $CHECK_INTERVAL
+            LAST_ACTIVE=$(get_boottime_sec)
+            send_notif "⚡ Auto-Shutdown Paused" "Device is charging. Inactivity timer suspended."
+            sleep "$CHECK_INTERVAL"
             continue
         fi
 
-        # --- CHECK SCREEN STATE ---
-        SCREEN_STATE=$(dumpsys power 2>/dev/null | grep "mWakefulness=" | grep -o "Awake")
+        CURRENT_TIME=$(get_boottime_sec)
 
-        if [ "$SCREEN_STATE" = "Awake" ]; then
-            # --- WARNING PHASE ---
-            echo "[$(date)] Screen is ON. Warning user." >> "$LOG_FILE"
-            
-            # Send Notification
-            send_toast "⚠️ Shutdown in ${WARN_TIME} seconds! Keep screen ON to snooze."
-            
-            # Wait warning period
-            sleep $WARN_TIME
-            
-            # Re-check Screen State
-            SCREEN_STATE_2=$(dumpsys power 2>/dev/null | grep "mWakefulness=" | grep -o "Awake")
-            
-            # Re-check Cancel Signal (in case cancelled during warning)
-            if [ -f "$STOP_FILE" ]; then
-                send_toast "✓ Shutdown Cancelled!"
-                rm -f "$STOP_FILE"
-                exit 0
-            fi
+        # 3. User activity / screen state
+        if is_screen_on; then
+            LAST_ACTIVE="$CURRENT_TIME"
+            send_notif "⏰ Auto-Shutdown Active" "Device in use. 2.5h inactivity timer will begin once screen turns off."
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
 
-            if [ "$SCREEN_STATE_2" = "Awake" ]; then
-                # User is still active (Screen still ON) -> Snooze
-                SNOOZE_MIN=$(awk -v t=$SNOOZE_TIME 'BEGIN {printf "%.0f", t/60}')
-                echo "[$(date)] User active. Snoozing for ${SNOOZE_TIME}s." >> "$LOG_FILE"
-                send_toast "😴 Snoozing for ${SNOOZE_MIN} minutes..."
-                sleep $SNOOZE_TIME
+        # 4. Inactivity countdown
+        IDLE_DURATION=$(( CURRENT_TIME - LAST_ACTIVE ))
+        REMAINING_SECS=$(( INACTIVITY_TIMEOUT - IDLE_DURATION ))
+
+        if [ "$REMAINING_SECS" -gt 0 ]; then
+            REMAINING_MINS=$(( (REMAINING_SECS + 59) / 60 ))
+            send_notif "⏰ Auto-Shutdown Monitoring" "Device idle. Shutting down in approx ${REMAINING_MINS} minute(s)."
+
+            # If remaining time is less than 15 minutes, sleep only the remaining time
+            # to hit the exact 2.5-hour target rather than overshooting
+            if [ "$REMAINING_SECS" -lt "$CHECK_INTERVAL" ]; then
+                sleep "$REMAINING_SECS"
             else
-                # User turned screen OFF (or let it timeout) -> Shutdown
-                echo "[$(date)] Screen turned OFF after warning. Shutting down NOW." >> "$LOG_FILE"
-                send_toast "🔌 Shutting down..."
-                sleep 2  # Give notification time to display
-                /system/bin/svc power shutdown || setprop sys.powerctl shutdown || /system/bin/reboot -p || reboot -p
-                exit 0
+                sleep "$CHECK_INTERVAL"
             fi
         else
-            # Screen was already OFF -> Shutdown immediately
-            echo "[$(date)] Screen is OFF. Shutting down NOW." >> "$LOG_FILE"
-            send_toast "🔌 Shutting down..."
-            sleep 2  # Give notification time to display
-            /system/bin/svc power shutdown || setprop sys.powerctl shutdown || /system/bin/reboot -p || reboot -p
-            exit 0
+            # Threshold hit: enter warning countdown phase
+            log_msg "Inactivity limit reached (${IDLE_DURATION}s). Starting 60s warning."
+
+            # Turn screen on
+            input keyevent 224 # KEYCODE_WAKEUP
+
+            WARN_REMAINING="$WARN_TIME"
+            ABORT_SHUTDOWN=0
+
+            # Dynamic rapid countdown loop (updates every 5 seconds)
+            while [ "$WARN_REMAINING" -gt 0 ]; do
+                send_notif "⚠️ SHUTDOWN IMMINENT" "Shutting down in ${WARN_REMAINING}s! Turn on or unlock screen to cancel."
+                
+                sleep 5
+                WARN_REMAINING=$(( WARN_REMAINING - 5 ))
+
+                if is_screen_on || [ -f "$STOP_FILE" ]; then
+                    log_msg "Activity detected during warning. Snoozing for ${SNOOZE_TIME}s."
+                    send_notif "😴 Shutdown Snoozed" "Activity detected. Snoozing for 20 minutes."
+                    rm -f "$STOP_FILE"
+                    ABORT_SHUTDOWN=1
+                    break
+                fi
+            done
+
+            if [ "$ABORT_SHUTDOWN" -eq 1 ]; then
+                NOW=$(get_boottime_sec)
+                LAST_ACTIVE=$(( NOW - INACTIVITY_TIMEOUT + SNOOZE_TIME ))
+                sleep "$CHECK_INTERVAL"
+            else
+                execute_shutdown
+                exit 0
+            fi
         fi
-        
-        # Wait before next check (battery saving)
-        sleep $CHECK_INTERVAL
     done
 }
 
-# IMPORTANT: Run in background with proper detachment for service.d
-# This prevents blocking the boot process
-(
-    # Wait for boot to complete before starting timer
-    while [ "$(getprop sys.boot_completed)" != "1" ]; do
-        sleep 1
-    done
-    
-    # Now run the shutdown timer
-    do_shutdown
-) &
+# --- LAUNCH HANDLER ---
+if [ "$(getprop sys.boot_completed)" = "1" ]; then
+    ( run_daemon ) &
+else
+    (
+        while [ "$(getprop sys.boot_completed)" != "1" ]; do
+            sleep 2
+        done
+        sleep 5
+        run_daemon
+    ) &
+fi
 
-# Exit immediately so the boot process can continue
 exit 0
