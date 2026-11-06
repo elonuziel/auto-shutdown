@@ -1,155 +1,148 @@
-# Auto-Shutdown for Android
+# Auto-Shutdown Daemon & Controller for Rooted Android (`asds`)
 
-**Set it and forget it!** This script automatically powers off your rooted Android device after you haven't used it for a while. Perfect for tablets, spare phones, or any device draining battery in your drawer.
+A lightweight, battery-saving daemon for rooted Android devices (Magisk, KernelSU, BakaSU, and APatch) that automatically powers off the device after prolonged inactivity, with deep sleep awareness, dynamic status-bar notifications, interactive touch snoozing, and an interactive CLI controller.
 
-## ✨ Features
+Tested and validated on **Android 14 through Android 17 (LineageOS 24)**.
 
-- ⏰ **Customizable** — Change when it shuts down (default: 2.5 hours)
-- 🔔 **Smart warnings** — Get notified before shutdown happens
-- 😴 **Snooze** — Keep your screen on to pause the shutdown
-- 🔌 **Charging aware** — Optionally skip shutdown if plugged in
-- ⛔ **Easy to cancel** — Stop it anytime with one command
-- 🚀 **Auto-loads** — Runs automatically on boot (supports Magisk, KernelSU, and APatch)
-- 🔋 **Battery friendly** — Smart checks that don't drain power
+---
 
-## Requirements
+## Key Features
 
-- Rooted Android device with [Magisk](https://github.com/topjohnwu/Magisk), [KernelSU](https://github.com/tiann/KernelSU), or [APatch](https://github.com/bmax121/APatch)
-- ADB (Android Debug Bridge) for installation
-- Android 8.0+ recommended
+* **Deep Sleep Resilience:** Uses monotonic hardware uptime from `/proc/uptime` instead of fragile POSIX `sleep` loops, ensuring timers stay accurate without battery-draining CPU wakelocks.
+* **Smart Touch Discrimination:** Monitors `mLastUserActivityTime` to distinguish programmatic screen wakeups from physical human contact. Wakes the screen to display a warning without falsely resetting the countdown.
+* **Interactive Snooze & Cancel:** 
+  * Tap the screen or press a physical button during the 60-second warning countdown to snooze for 20 minutes.
+  * Snooze, stop, or query remaining time anytime via the `asds` CLI tool.
+* **Reliable Notifications:** Dispatched through UID 2000 (`com.android.shell`) with public system drawables, ensuring notifications display on modern Android (13+) without permission issues.
+* **Tiered Safe Shutdown:** Sequentially requests `svc power shutdown` (clean framework shutdown with animations), `setprop sys.powerctl shutdown` (disk sync and unmount), and `/system/bin/reboot -p` as fallback.
+* **Built-in Interactive CLI Menu:** Full terminal control interface with live logs, real-time status monitoring, and immediate shutdown controls.
 
-## Installation
+---
 
-### Using ADB (Recommended)
+## System Requirements
 
-```bash
-# Push the script to your device
-adb push autoshutdown_service.sh /sdcard/
+* Android 10 - 17 (AOSP, LineageOS, PixelOS, or stock OEM ROMs)
+* Root access via **KernelSU**, **BakaSU**, **Magisk**, or **APatch**
+* Terminal emulator (Termux, TermOnePlus, or ADB Shell)
 
-# Install to service.d directory (standard across Magisk, KernelSU, and APatch)
-adb shell
+---
+
+## Quick Installation
+
+Run these commands in your root terminal (`su`):
+
+```sh
 su
-mv /sdcard/autoshutdown_service.sh /data/adb/service.d/
-chmod +x /data/adb/service.d/autoshutdown_service.sh
-exit
-exit
-
-# Reboot to activate
-adb reboot
+cd /sdcard/Download # or the path where you cloned this repo
+sh install.sh
 ```
 
-### Using Root File Manager
+### Manual Installation
 
-1. Copy `autoshutdown_service.sh` to `/data/adb/service.d/`
-2. Set permissions to `rwxr-xr-x` (755)
-3. Reboot your device
+1. Copy `auto_shutdown.sh` to `/data/adb/service.d/auto_shutdown.sh`.
+2. Set file permissions:
+   ```sh
+   chmod 755 /data/adb/service.d/auto_shutdown.sh
+   chown root:root /data/adb/service.d/auto_shutdown.sh
+   sed -i 's/\r$//' /data/adb/service.d/auto_shutdown.sh
+   ```
+3. Create the `asds` symlink for global access:
+   ```sh
+   mkdir -p /data/adb/ksu/bin
+   ln -sf /data/adb/service.d/auto_shutdown.sh /data/adb/ksu/bin/asds
+   chmod 755 /data/adb/ksu/bin/asds
+   ```
+4. Start the service:
+   ```sh
+   asds restart
+   ```
 
-For detailed installation instructions, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
+---
 
-### Optional: Install Stop Script
+## CLI Usage (`asds`)
 
-```bash
-adb push stop_shutdown.sh /sdcard/
-adb shell su -c "mv /sdcard/stop_shutdown.sh /data/local/tmp/ && chmod +x /data/local/tmp/stop_shutdown.sh"
+Typing `asds` without arguments opens the interactive menu:
+
+```text
+==========================================
+       AUTO-SHUTDOWN CONTROL MENU (ASDS)  
+==========================================
+ Daemon Status: RUNNING (PID: 4824)
+ Inactive Time: 45 min(s)
+ Time to Alert: 105 min(s) (6300 seconds)
+ Screen State : ASLEEP (Timer actively ticking)
+==========================================
+ 1) Check Status & Remaining Time
+ 2) Snooze Shutdown (20 mins)
+ 3) Stop / Cancel Daemon
+ 4) Start / Restart Daemon
+ 5) View Live Log (Last 15 lines)
+ 6) SHUTDOWN NOW (Immediate Power Off)
+ 0) Exit Menu
+==========================================
+Select an option [0-6]: 
 ```
 
-## ⚙️ Configuration
+### Direct Commands
 
-Open `autoshutdown_service.sh` and adjust these settings at the top:
+You can run individual tasks without entering the menu:
 
-```bash
-WAIT_TIME=$(awk 'BEGIN {print 2.5*60*60}')   # How long until first warning (2.5 hours)
-SNOOZE_TIME=$(awk 'BEGIN {print 20*60}')     # How long to pause when you snooze (20 minutes)
-WARN_TIME=60                                  # Countdown to shutdown after warning (60 seconds)
-CHECK_INTERVAL=30                             # How often to check screen (30 seconds)
-SKIP_IF_CHARGING=0                            # Set to 1 to prevent shutdown while charging
+| Command | Action |
+| :--- | :--- |
+| `asds status` | Displays daemon status, current screen state, and countdown. |
+| `asds snooze` | Immediately adds 20 minutes to the timer. |
+| `asds stop` | Stops the running daemon and clears notifications. |
+| `asds start` | Starts the daemon worker if not already running. |
+| `asds restart` | Kills the existing worker and launches a fresh instance. |
+
+---
+
+## Configuration
+
+Edit `/data/adb/service.d/auto_shutdown.sh` to customize behavior:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `INACTIVITY_TIMEOUT` | `$(( 150 * 60 ))` | Time in seconds before triggering warning (2.5 hours). |
+| `WARN_TIME` | `60` | Duration in seconds of the active screen warning before shutdown. |
+| `SNOOZE_TIME` | `$(( 20 * 60 ))` | Snooze duration in seconds (20 minutes). |
+| `CHECK_INTERVAL` | `$(( 15 * 60 ))` | How often the daemon polls state while asleep (15 minutes). |
+| `SKIP_IF_CHARGING` | `0` | Set to `1` to prevent auto-shutdown while plugged into a charger. |
+
+---
+
+## How It Works
+
+```
+[Boot Complete] 
+       │
+       ▼
+[asds Daemon Starts] ──► Reads /proc/uptime & Screen State
+       │
+       ├──► Screen ON: Reset Inactivity Timer
+       │
+       └──► Screen OFF: Count Idle Duration
+                 │
+                 ▼
+       [2.5 Hours Reached]
+                 │
+                 ▼
+       [Turn Screen ON (`input keyevent 224`)]
+                 │
+                 ├──► Wait 2s for wake-up event to settle
+                 ├──► Capture baseline `mLastUserActivityTime`
+                 └──► Start 60-second warning countdown
+                           │
+       ┌───────────────────┴───────────────────┐
+       ▼                                       ▼
+[Touch / Button Detected]               [Zero Interaction]
+       │                                       │
+       ▼                                       ▼
+Snooze 20 Minutes & Reset              Execute `svc power shutdown`
 ```
 
-**Quick settings:**
-- Increase `WARN_TIME` → get more time to react to the warning
-- Decrease `WAIT_TIME` → get warned sooner
-- Set `SKIP_IF_CHARGING=1` → never shut down while charging
+---
 
-## 🎯 How It Works
+## License
 
-Think of it like a smart timer:
-
-1. **Boot** → Script starts automatically when your phone powers on
-2. **Wait** → Your device relaxes for the configured time (default: 2.5 hours)
-3. **Check** → Script checks if your screen is on
-4. **Screen is ON?** → You get a warning notification with a countdown
-   - If you touch/use the device → snooze for 20 minutes
-   - If you ignore it → device shuts down
-5. **Screen already OFF?** → Shuts down immediately (you're probably not using it anyway!)
-
-## 📱 Usage
-
-### Start the Timer
-
-```bash
-# After installation, just reboot your device
-adb reboot
-```
-
-The script runs automatically in the background. You'll see a notification that it's active.
-
-### Check What's Happening
-
-```bash
-# View what the script is doing
-adb shell su -c "cat /data/local/tmp/shutdown_log.txt"
-
-# Confirm it's running
-adb shell su -c "pgrep -l -f autoshutdown || ps -ef | grep autoshutdown"
-```
-
-### Stop or Cancel the Timer
-
-**Option 1: Quick cancel** (if you installed the stop script)
-```bash
-adb shell su -c "/data/local/tmp/stop_shutdown.sh"
-```
-
-**Option 2: Manual cancel**
-```bash
-adb shell touch /sdcard/stop_shutdown_timer
-```
-
-**Option 3: Force kill**
-```bash
-adb shell su -c "kill $(cat /data/local/tmp/shutdown_timer.pid)"
-```
-
-## ❓ Troubleshooting
-
-### 🔔 Notifications aren't showing?
-
-Some Android versions hide system notifications. Try these:
-- Check if notifications are enabled for system apps in Settings
-- Turn off Do Not Disturb mode
-- Check the log file to confirm the script is running: `adb shell su -c "cat /data/local/tmp/shutdown_log.txt"`
-
-### 🚀 Script won't start after reboot?
-
-Make sure it's installed correctly:
-```bash
-adb shell su -c "ls -la /data/adb/service.d/autoshutdown_service.sh"
-```
-
-The file should show as executable (`-rwxr-xr-x`).
-
-### ⚡ Script running multiple times?
-
-This shouldn't happen (built-in protection), but if it does:
-```bash
-adb shell su -c "rm -f /data/local/tmp/shutdown_timer.pid"
-adb reboot
-```
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## ⚠️ Important
-
-This script has root access and can shut down your device. Use responsibly and at your own risk.
+MIT License. Feel free to modify and adapt for your ROM or custom kernel setup.
